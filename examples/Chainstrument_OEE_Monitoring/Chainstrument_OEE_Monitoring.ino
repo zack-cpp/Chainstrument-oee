@@ -5,18 +5,23 @@
 #include <ArduinoJson.h>
 
 // ===================== CONFIG =====================
-#define WIFI_SSID "ZaCK's PC"
-#define WIFI_PASSWORD "2444666668888888000000"
+#define WIFI_SSID ""
+#define WIFI_PASSWORD ""
 
-#define SERVER_URL "https://app.chainstrument.com"
-#define DEVICE_UID "OCHA-0001"
-#define DEVICE_SECRET "Bfnr705gk0m1wlQGM77QKYfseeg0CMNH32jQ99h7n_k"
+#define SERVER_URL "https://app.chainstrument.com/api/monitoring/ingest"
+#define DEVICE_UID ""
+#define DEVICE_SECRET ""
 // ==================================================
 
 #define NTP_URL "pool.ntp.org"
 
+HTTPClient http;
+
 String hmacSHA256(const String &key, const String &data);
 void sendTelemetry(const float* values, uint8_t channelCount);
+void ensureHttpConnection(const String& url);
+
+bool httpInitialized = false;
 
 void setup() {
   Serial.begin(115200);
@@ -83,8 +88,6 @@ void sendTelemetry(const float* values, uint8_t channelCount) {
     return;
   }
 
-  HTTPClient http;
-
   long now = time(nullptr);
   String timestampStr = String(now);
 
@@ -106,10 +109,7 @@ void sendTelemetry(const float* values, uint8_t channelCount) {
   String message = timestampStr + body;
   String signature = hmacSHA256(DEVICE_SECRET, message);
 
-  // ---------- HTTP ----------
-  String url = String(SERVER_URL) + "/api/monitoring/ingest";
-
-  http.begin(url);
+  ensureHttpConnection(SERVER_URL);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("X-Device-Uid", DEVICE_UID);
   http.addHeader("X-Timestamp", timestampStr);
@@ -121,17 +121,28 @@ void sendTelemetry(const float* values, uint8_t channelCount) {
   Serial.print(channelCount);
   Serial.print(" channels... ");
 
+  uint32_t start = millis();
   int httpCode = http.POST(body);
 
-  if (httpCode == 200) {
-    Serial.println("OK");
+  uint32_t elapsed = millis() - start;
+  Serial.printf("POST latency: %lu ms\n", elapsed);
+
+  // ---------- RESPONSE ----------
+  if (httpCode > 0) {
+    Serial.printf("HTTP %d\n", httpCode);
     Serial.println(http.getString());
   } else {
-    Serial.print("FAILED (");
-    Serial.print(httpCode);
-    Serial.println(")");
-    Serial.println(http.getString());
+    Serial.printf("HTTP request failed (%i), resetting connection\n", httpCode);
+    http.end();
+    httpInitialized = false;
   }
+}
 
-  http.end();
+void ensureHttpConnection(const String& url) {
+  if (!httpInitialized) {
+    Serial.println("Initializing persistent HTTP connection...");
+    http.begin(url);
+    http.setReuse(true);
+    httpInitialized = true;
+  }
 }

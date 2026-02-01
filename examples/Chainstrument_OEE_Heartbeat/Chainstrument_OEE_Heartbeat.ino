@@ -4,18 +4,23 @@
 #include <WiFi.h>
 
 // ===================== CONFIG =====================
-#define WIFI_SSID "ZaCK's PC"
-#define WIFI_PASSWORD "2444666668888888000000"
+#define WIFI_SSID ""
+#define WIFI_PASSWORD ""
 
-#define SERVER_URL "https://app.chainstrument.com"
-#define DEVICE_UID "OCHA-0001"
-#define DEVICE_SECRET "Bfnr705gk0m1wlQGM77QKYfseeg0CMNH32jQ99h7n_k"
+#define SERVER_URL "https://app.chainstrument.com/api/devices/heartbeat"
+#define DEVICE_UID ""
+#define DEVICE_SECRET ""
 // ==================================================
 
 #define NTP_URL "pool.ntp.org"
 
+HTTPClient http;
+
 String hmacSHA256(const String &key, const String &data);
 void send_heart_beat(void);
+void ensureHttpConnection(const String& url);
+
+bool httpInitialized = false;
 
 void setup() {
   Serial.begin(115200);
@@ -76,8 +81,6 @@ void send_heart_beat(void) {
     return;
   }
 
-  HTTPClient http;
-
   // 1. Timestamp (epoch seconds)
   long timestamp = time(nullptr);
   String timestampStr = String(timestamp);
@@ -91,10 +94,7 @@ void send_heart_beat(void) {
   // 4. HMAC
   String signature = hmacSHA256(DEVICE_SECRET, message);
 
-  // 5. POST
-  String url = String(SERVER_URL) + "/api/devices/heartbeat";
-
-  http.begin(url);
+  ensureHttpConnection(SERVER_URL);
   http.addHeader("X-Device-Uid", DEVICE_UID);
   http.addHeader("X-Timestamp", timestampStr);
   http.addHeader("X-Signature", signature);
@@ -103,17 +103,27 @@ void send_heart_beat(void) {
   int httpCode = http.POST(body);  // empty body
 
   Serial.println("---- HEARTBEAT ----");
-  Serial.println("URL: " + url);
+  Serial.printf("URL: %s\n", SERVER_URL);
   Serial.println("Timestamp: " + timestampStr);
   Serial.println("Signature: " + signature);
   Serial.println("HTTP Code: " + String(httpCode));
 
+  // ---------- RESPONSE ----------
   if (httpCode > 0) {
-    Serial.println("Response:");
+    Serial.printf("HTTP %d\n", httpCode);
     Serial.println(http.getString());
   } else {
-    Serial.println("Heartbeat failed");
+    Serial.printf("HTTP request failed (%i), resetting connection\n", httpCode);
+    http.end();
+    httpInitialized = false;
   }
+}
 
-  http.end();
+void ensureHttpConnection(const String& url) {
+  if (!httpInitialized) {
+    Serial.println("Initializing persistent HTTP connection...");
+    http.begin(url);
+    http.setReuse(true);
+    httpInitialized = true;
+  }
 }
